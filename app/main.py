@@ -67,16 +67,7 @@ MOCK_DATA = {
 # Helpers
 # ═══════════════════════════════════
 def _ok(data: dict, trace_id: str) -> dict:
-    return {
-        "success": True,
-        "data": data,
-        "traceId": trace_id,
-        "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-
-
-def _now():
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"code": 0, "message": "success", "data": data, "trace_id": trace_id}
 
 
 # ═══════════════════════════════════
