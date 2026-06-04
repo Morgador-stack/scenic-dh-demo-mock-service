@@ -3,16 +3,55 @@
 竞赛演示兜底，避免依赖真实外部系统。提供一键演示脚本和 mock 数据。
 """
 
+import uuid
+import time
 import logging
 import sys
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
-logging.basicConfig(level=logging.INFO, stream=sys.stdout)
+logging.basicConfig(
+    level=logging.INFO,
+    stream=sys.stdout,
+    format='{"time":"%(asctime)s","level":"%(levelname)s","service":"demo-mock","message":"%(message)s"}',
+)
 logger = logging.getLogger("demo-mock")
+
+
+class TraceMiddleware(BaseHTTPMiddleware):
+    """为每个请求注入 trace_id，从上游继承或新建"""
+
+    async def dispatch(self, request: Request, call_next):
+        trace_id = request.headers.get("x-trace-id", f"trace_{uuid.uuid4().hex}")
+        span_id = str(uuid.uuid4())[:8]
+
+        request.state.trace_id = trace_id
+        request.state.span_id = span_id
+
+        start = time.perf_counter()
+        response = await call_next(request)
+        elapsed_ms = (time.perf_counter() - start) * 1000
+
+        response.headers["x-trace-id"] = trace_id
+        response.headers["x-span-id"] = span_id
+        response.headers["x-service"] = "demo-mock"
+        response.headers["x-elapsed-ms"] = f"{elapsed_ms:.1f}"
+
+        logger.info(
+            "request",
+            extra={
+                "trace_id": trace_id,
+                "method": request.method,
+                "path": request.url.path,
+                "status": response.status_code,
+                "elapsed_ms": round(elapsed_ms, 2),
+            },
+        )
+        return response
 
 
 @asynccontextmanager
@@ -20,8 +59,10 @@ async def lifespan(app: FastAPI):
     logger.info("demo-mock-service starting on port 8006")
     yield
 
+
 app = FastAPI(title="scenic-dh-demo-mock-service", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(TraceMiddleware)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 # ═══════════════════════════════════
@@ -70,33 +111,54 @@ def _ok(data: dict, trace_id: str) -> dict:
     return {"code": 0, "message": "success", "data": data, "trace_id": trace_id}
 
 
+def _get_trace(request: Request) -> str:
+    return getattr(request.state, "trace_id", f"trace_{uuid.uuid4().hex}")
+
+
 # ═══════════════════════════════════
 # Routes
 # ═══════════════════════════════════
 @app.get("/health")
-def health():
-    return _ok({"status": "ok", "version": "1.0.0"}, "startup")
+def health(request: Request):
+    return _ok({"status": "ok", "version": "1.0.0"}, _get_trace(request))
 
 
-# Demo control
+# Demo control — 读取请求体中的 scenarioId
 @app.post("/v1/demo/reset")
-def demo_reset():
+async def demo_reset(request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
     _demo_state["currentStep"] = 0
     _demo_state["status"] = "idle"
     _demo_state["stepResult"] = None
-    return _ok({"reset": True, "scenarioId": SCENARIO["id"]}, "demo-reset")
+    scenario_id = body.get("scenarioId", SCENARIO["id"])
+    return _ok({"reset": True, "scenarioId": scenario_id}, _get_trace(request))
 
 
 @app.post("/v1/demo/start")
-def demo_start():
+async def demo_start(request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    scenario_id = body.get("scenarioId", SCENARIO["id"])
     _demo_state["currentStep"] = 1
     _demo_state["status"] = "running"
     _demo_state["stepResult"] = SCENARIO["steps"][0]
-    return _ok({"currentStep": 1, "step": SCENARIO["steps"][0]}, "demo-start")
+    return _ok({"currentStep": 1, "scenarioId": scenario_id, "step": SCENARIO["steps"][0]}, _get_trace(request))
 
 
 @app.post("/v1/demo/next")
-def demo_next():
+async def demo_next(request: Request):
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
     step = _demo_state["currentStep"]
     if step < SCENARIO["totalSteps"]:
         step += 1
@@ -106,43 +168,43 @@ def demo_next():
     else:
         _demo_state["status"] = "done"
         _demo_state["stepResult"] = None
-    return _ok(_demo_state, "demo-next")
+    return _ok(_demo_state, _get_trace(request))
 
 
 @app.get("/v1/demo/current")
-def demo_current():
-    return _ok(_demo_state, "demo-current")
+def demo_current(request: Request):
+    return _ok(_demo_state, _get_trace(request))
 
 
 @app.post("/v1/demo/pause")
-def demo_pause():
+def demo_pause(request: Request):
     _demo_state["status"] = "paused"
-    return _ok({"paused": True, "atStep": _demo_state["currentStep"]}, "demo-pause")
+    return _ok({"paused": True, "atStep": _demo_state["currentStep"]}, _get_trace(request))
 
 
 # Mock data endpoints
 @app.get("/v1/mock/weather")
-def mock_weather(scenic_id: str = None):
-    return _ok(MOCK_DATA["weather"], "mock-weather")
+def mock_weather(request: Request, scenic_id: str = None):
+    return _ok(MOCK_DATA["weather"], _get_trace(request))
 
 
 @app.get("/v1/mock/queues")
-def mock_queues(spot_id: str = None):
+def mock_queues(request: Request, spot_id: str = None):
     data = dict(MOCK_DATA["queues"])
     if spot_id:
         data["spotId"] = spot_id
-    return _ok(data, "mock-queue")
+    return _ok(data, _get_trace(request))
 
 
 @app.get("/v1/mock/crowd")
-def mock_crowd():
-    return _ok(MOCK_DATA["crowd"], "mock-crowd")
+def mock_crowd(request: Request):
+    return _ok(MOCK_DATA["crowd"], _get_trace(request))
 
 
 @app.get("/v1/mock/locations/{spot_id}")
-def mock_location(spot_id: str):
+def mock_location(request: Request, spot_id: str):
     loc = MOCK_DATA["locations"].get(spot_id, {"lat": 31.42, "lng": 120.10})
-    return _ok({"spotId": spot_id, "location": loc, "source": "mock"}, f"mock-loc-{spot_id}")
+    return _ok({"spotId": spot_id, "location": loc, "source": "mock"}, _get_trace(request))
 
 
 if __name__ == "__main__":
