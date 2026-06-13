@@ -105,7 +105,7 @@ MOCK_DATA = {
     "queues": {"spotId": "LS-001", "queueMinutes": 15, "crowdLevel": "medium", "source": "mock"},
     "crowd": {"activeSessions": 42, "totalVisitors": 1280, "hotSpots": ["LS-001", "LS-003", "LS-002"]},
     "tickets": {"items": [{"id": "TK-001", "name": "灵山成人票", "price": 210, "status": "available"}]},
-    "locations": {"LS-001": {"lat": 31.4220, "lng": 120.1050}, "LS-002": {"lat": 31.4215, "lng": 120.1080}, "LS-003": {"lat": 31.4200, "lng": 120.1030}},
+    "locations": {"LS-001": {"lat": 31.4240, "lng": 120.1070}, "LS-002": {"lat": 31.4215, "lng": 120.1080}, "LS-003": {"lat": 31.4200, "lng": 120.1030}},
 }
 
 
